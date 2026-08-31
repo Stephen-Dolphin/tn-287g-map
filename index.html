@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tennessee ICE 287(g) Participating Counties (August 2026)</title>
+    
+    <!-- Tailwind CSS for rapid UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- D3.js for SVG rendering and data mapping -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <!-- TopoJSON client for processing boundary files -->
+    <script src="https://unpkg.com/topojson-client@3"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        /* Tooltip Styling */
+        #tooltip {
+            position: absolute;
+            background: rgba(17, 24, 39, 0.95);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease, transform 0.1s ease;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            font-size: 0.875rem;
+            z-index: 50;
+            min-width: 200px;
+        }
+
+        /* County Path Transitions */
+        .county {
+            transition: opacity 0.3s ease, fill 0.3s ease, stroke-width 0.1s ease;
+            cursor: pointer;
+        }
+
+        /* Dynamic CSS Legend patterns matching SVG definitions */
+        .legend-jem { background-color: #bd222a; }
+        .legend-tfm { background-color: #0b457a; }
+        .legend-wso { background-color: #457a44; }
+        .legend-none { background-color: #e0e0e0; }
+        
+        .legend-jem-tfm {
+            background: repeating-linear-gradient(45deg, #bd222a, #bd222a 10px, #0b457a 10px, #0b457a 20px);
+        }
+        .legend-jem-wso {
+            background: repeating-linear-gradient(45deg, #bd222a, #bd222a 10px, #457a44 10px, #457a44 20px);
+        }
+        .legend-tfm-wso {
+            background: repeating-linear-gradient(45deg, #0b457a, #0b457a 10px, #457a44 10px, #457a44 20px);
+        }
+        .legend-all {
+            background: repeating-linear-gradient(45deg, #bd222a, #bd222a 10px, #0b457a 10px, #0b457a 20px, #457a44 20px, #457a44 30px);
+        }
+
+        .county-label {
+            font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-stretch: condensed;
+            font-size: 7.5px;
+            letter-spacing: -0.2px;
+            text-shadow: 0 0 3px white, 0 0 3px white, 0 0 3px white;
+            fill: #333;
+            text-anchor: middle;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="text-slate-800 h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 shadow-sm px-6 py-4 flex flex-col sm:flex-row justify-between items-center z-10 shrink-0">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900">Tennessee 287(g) Agreements</h1>
+            <p class="text-sm text-slate-500 mt-1">ICE/DHS Participating Counties as of August 2026</p>
+        </div>
+        <div class="mt-4 sm:mt-0 flex items-center">
+            <div class="relative w-full sm:w-64">
+                <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                    <svg class="w-4 h-4 text-slate-500" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20">
+                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"/>
+                    </svg>
+                </div>
+                <input type="text" id="searchInput" class="bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full pl-10 p-2.5" placeholder="Search for a county...">
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Sidebar Controls & Legend -->
+        <aside class="w-full md:w-80 bg-white border-r border-slate-200 flex flex-col overflow-y-auto shrink-0 z-10">
+            <div class="p-6 border-b border-slate-200">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Filter by Model</h2>
+                <div class="space-y-3" id="filters">
+                    <label class="flex items-center space-x-3 cursor-pointer group">
+                        <input type="checkbox" value="Jail Enforcement Model" checked class="form-checkbox h-5 w-5 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer">
+                        <span class="text-sm font-medium text-slate-700 group-hover:text-slate-900">Jail Enforcement Model (JEM)</span>
+                    </label>
+                    <label class="flex items-center space-x-3 cursor-pointer group">
+                        <input type="checkbox" value="Task Force Model" checked class="form-checkbox h-5 w-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer">
+                        <span class="text-sm font-medium text-slate-700 group-hover:text-slate-900">Task Force Model (TFM)</span>
+                    </label>
+                    <label class="flex items-center space-x-3 cursor-pointer group">
+                        <input type="checkbox" value="Warrant Service Officer" checked class="form-checkbox h-5 w-5 text-green-600 rounded border-slate-300 focus:ring-green-500 cursor-pointer">
+                        <span class="text-sm font-medium text-slate-700 group-hover:text-slate-900">Warrant Service Officer (WSO)</span>
+                    </label>
+                </div>
+                <p class="text-xs text-slate-400 mt-4 leading-relaxed">
+                    Toggle models to update map rendering. Counties with multiple models will display striped patterns reflecting active filters.
+                </p>
+            </div>
+            
+            <div class="p-6">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Legend</h2>
+                
+                <div class="space-y-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-jem border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">Jail Enforcement Model</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-tfm border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">Task Force Model</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-wso border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">Warrant Service Officer</span>
+                    </div>
+                    
+                    <div class="pt-2 pb-1"><div class="h-px w-full bg-slate-200"></div></div>
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase">Multiple Models</h3>
+                    
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-jem-tfm border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">JEM & TFM</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-jem-wso border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">JEM & WSO</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-tfm-wso border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">TFM & WSO</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-all border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">All Three Models</span>
+                    </div>
+
+                    <div class="pt-2 pb-1"><div class="h-px w-full bg-slate-200"></div></div>
+                    
+                    <div class="flex items-center gap-3">
+                        <div class="w-6 h-6 rounded-full legend-none border border-slate-200 shadow-sm"></div>
+                        <span class="text-sm text-slate-700">Non-Participating / Filtered</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <main class="flex-1 bg-slate-50 relative overflow-hidden flex items-center justify-center p-4">
+            <div id="map-container" class="w-full h-full relative drop-shadow-xl flex items-center justify-center">
+                <!-- SVG will be injected here via D3 -->
+            </div>
+            
+            <!-- Loading Indicator -->
+            <div id="loader" class="absolute inset-0 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm z-20">
+                <div class="flex flex-col items-center">
+                    <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="mt-4 text-slate-600 font-medium">Loading Map Data...</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Tooltip Div (Moved to body level to fix positioning offset) -->
+    <div id="tooltip"></div>
+
+    <script>
+        
+        // Provided parsed JSON mapping for Tennessee counties
+        const countyData = {"Cheatham": ["Task Force Model", "Warrant Service Officer"], "Anderson": ["Warrant Service Officer"], "Bedford": ["Warrant Service Officer"], "Blount": ["Task Force Model", "Warrant Service Officer"], "Bradley": ["Jail Enforcement Model", "Task Force Model"], "Carter": ["Warrant Service Officer"], "Chester": ["Task Force Model", "Warrant Service Officer"], "Clay": ["Warrant Service Officer"], "Cocke": ["Task Force Model", "Warrant Service Officer"], "Coffee": ["Warrant Service Officer"], "Robertson": ["Task Force Model", "Warrant Service Officer"], "Crockett": ["Task Force Model", "Warrant Service Officer"], "Cumberland": ["Warrant Service Officer"], "Decatur": ["Warrant Service Officer"], "Dekalb": ["Warrant Service Officer"], "Dickson": ["Warrant Service Officer"], "Dyer": ["Warrant Service Officer"], "Franklin": ["Jail Enforcement Model", "Task Force Model", "Warrant Service Officer"], "Fayette": ["Warrant Service Officer"], "Fentress": ["Task Force Model", "Warrant Service Officer"], "Sumner": ["Task Force Model", "Warrant Service Officer"], "Giles": ["Warrant Service Officer"], "Grainger": ["Warrant Service Officer"], "Greene": ["Jail Enforcement Model", "Task Force Model"], "Grundy": ["Task Force Model", "Warrant Service Officer"], "Hamblen": ["Warrant Service Officer"], "Hamilton": ["Jail Enforcement Model"], "Hancock": ["Warrant Service Officer"], "Hardin": ["Warrant Service Officer"], "Haywood": ["Warrant Service Officer"], "Henry": ["Task Force Model", "Warrant Service Officer"], "Hickman": ["Task Force Model", "Warrant Service Officer"], "Humphreys": ["Task Force Model", "Warrant Service Officer"], "Jefferson": ["Task Force Model", "Warrant Service Officer"], "Campbell": ["Task Force Model"], "Knox": ["Jail Enforcement Model"], "Lauderdale": ["Warrant Service Officer"], "Lawrence": ["Jail Enforcement Model", "Task Force Model", "Warrant Service Officer"], "Lewis": ["Warrant Service Officer"], "Lincoln": ["Warrant Service Officer"], "Louden": ["Task Force Model", "Warrant Service Officer"], "Macon": ["Task Force Model", "Warrant Service Officer"], "Madison": ["Task Force Model", "Warrant Service Officer"], "Marion": ["Task Force Model", "Warrant Service Officer"], "McMinn": ["Warrant Service Officer"], "McNairy": ["Warrant Service Officer"], "Meigs": ["Warrant Service Officer"], "Moore": ["Warrant Service Officer"], "Monroe": ["Jail Enforcement Model", "Task Force Model"], "Montgomery": ["Warrant Service Officer"], "Morgan": ["Jail Enforcement Model"], "Obion": ["Warrant Service Officer"], "Overton": ["Warrant Service Officer"], "Perry": ["Task Force Model", "Warrant Service Officer"], "Pickett": ["Task Force Model", "Warrant Service Officer"], "Polk": ["Task Force Model", "Warrant Service Officer"], "Putnam": ["Jail Enforcement Model", "Task Force Model"], "Rutherford": ["Warrant Service Officer"], "Sequatchie": ["Warrant Service Officer"], "Sevier": ["Task Force Model", "Warrant Service Officer"], "Shelby": ["Warrant Service Officer"], "Smith": ["Warrant Service Officer"], "White": ["Task Force Model"], "Stewart": ["Warrant Service Officer"], "Sullivan": ["Task Force Model", "Warrant Service Officer"], "Tipton": ["Warrant Service Officer"], "Trousdale": ["Warrant Service Officer"], "Unicoi": ["Warrant Service Officer"], "Van Buren": ["Warrant Service Officer"], "Warren": ["Warrant Service Officer"], "Washington": ["Warrant Service Officer"], "Wayne": ["Warrant Service Officer"], "Weakley": ["Warrant Service Officer"], "Williamson": ["Warrant Service Officer"], "Wilson": ["Warrant Service Officer"]};
+
+        const colors = {
+            jem: "#bd222a",
+            tfm: "#0b457a",
+            wso: "#457a44",
+            none: "#e0e0e0"
+        };
+
+        // --- 2. Setup D3 Environment & SVG ---
+        const container = document.getElementById("map-container");
+        const tooltip = d3.select("#tooltip");
+        const loader = document.getElementById("loader");
+
+        // Use a standard large viewBox for high resolution coordinate mapping
+        const width = 1000;
+        const height = 500;
+
+        const svg = d3.select("#map-container")
+            .append("svg")
+            .attr("viewBox", `0 0 ${width} ${height}`)
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .attr("preserveAspectRatio", "xMidYMid meet");
+
+        const pathGroup = svg.append("g").attr("class", "paths-layer");
+        const labelGroup = svg.append("g").attr("class", "labels-layer");
+
+        // Define SVG Patterns for combined models
+        const defs = svg.append("defs");
+        const patternWidth = 12;
+
+        const createPattern = (id, colorStops) => {
+            const pattern = defs.append("pattern")
+                .attr("id", id)
+                .attr("width", patternWidth)
+                .attr("height", patternWidth)
+                .attr("patternTransform", "rotate(45)")
+                .attr("patternUnits", "userSpaceOnUse");
+            
+            const numStops = colorStops.length;
+            const stopWidth = patternWidth / numStops;
+
+            colorStops.forEach((color, i) => {
+                pattern.append("rect")
+                    .attr("x", i * stopWidth)
+                    .attr("y", 0)
+                    .attr("width", stopWidth + 0.5) // +0.5 prevents rendering gaps
+                    .attr("height", patternWidth)
+                    .attr("fill", color);
+            });
+        };
+
+        // Initialize dynamic stripe patterns
+        createPattern("pat-jem-tfm", [colors.jem, colors.tfm]);
+        createPattern("pat-jem-wso", [colors.jem, colors.wso]);
+        createPattern("pat-tfm-wso", [colors.tfm, colors.wso]);
+        createPattern("pat-all", [colors.jem, colors.tfm, colors.wso]);
+
+        // State variables for interactivity
+        let activeFilters = ["Jail Enforcement Model", "Task Force Model", "Warrant Service Officer"];
+        let searchTerm = "";
+        let tnFeatures = []; // Stores boundary objects for fast re-rendering
+
+        // --- 3. Dynamic Styling Logic ---
+        function getCountyStyle(countyName) {
+            // Normalize names to match data exactly if slight discrepancies exist
+            let key = countyName;
+            if (key === "De Kalb" || key === "DeKalb") key = "Dekalb";
+            if (key === "Loudon") key = "Louden";
+            
+            const rawModels = countyData[key] || [];
+            
+            // Only consider models that are both in the county AND active in user filters
+            const activeModels = rawModels.filter(m => activeFilters.includes(m));
+            
+            const hasJEM = activeModels.includes("Jail Enforcement Model");
+            const hasTFM = activeModels.includes("Task Force Model");
+            const hasWSO = activeModels.includes("Warrant Service Officer");
+
+            let fill = colors.none;
+            let label = "No Participating Agreements";
+            
+            // Multi-model checks
+            if (hasJEM && hasTFM && hasWSO) {
+                fill = "url(#pat-all)";
+                label = "JEM, TFM & WSO";
+            } else if (hasJEM && hasTFM) {
+                fill = "url(#pat-jem-tfm)";
+                label = "JEM & TFM";
+            } else if (hasJEM && hasWSO) {
+                fill = "url(#pat-jem-wso)";
+                label = "JEM & WSO";
+            } else if (hasTFM && hasWSO) {
+                fill = "url(#pat-tfm-wso)";
+                label = "TFM & WSO";
+            } else if (hasJEM) {
+                fill = colors.jem;
+                label = "Jail Enforcement Model";
+            } else if (hasTFM) {
+                fill = colors.tfm;
+                label = "Task Force Model";
+            } else if (hasWSO) {
+                fill = colors.wso;
+                label = "Warrant Service Officer";
+            } else if (rawModels.length > 0 && activeModels.length === 0) {
+                // Participates, but all models filtered out
+                fill = colors.none;
+                label = "Filtered out via controls";
+            }
+
+            return { fill, label, activeModels, rawModels };
+        }
+
+        function updateMapDisplay() {
+            pathGroup.selectAll("path.county")
+                .attr("fill", d => {
+                    const style = getCountyStyle(d.properties.name);
+                    return style.fill;
+                })
+                .style("opacity", d => {
+                    if (searchTerm === "") return 1;
+                    const match = d.properties.name.toLowerCase().includes(searchTerm.toLowerCase());
+                    return match ? 1 : 0.15;
+                })
+                .attr("stroke", d => {
+                     if (searchTerm !== "" && d.properties.name.toLowerCase().includes(searchTerm.toLowerCase())) return "#111827";
+                     return "#ffffff";
+                })
+                .attr("stroke-width", d => {
+                     if (searchTerm !== "" && d.properties.name.toLowerCase().includes(searchTerm.toLowerCase())) return 2;
+                     return 0.75;
+                });
+                
+            labelGroup.selectAll("text.county-label")
+                .style("opacity", d => {
+                    if (searchTerm === "") return 1;
+                    const match = d.properties.name.toLowerCase().includes(searchTerm.toLowerCase());
+                    return match ? 1 : 0.15;
+                });
+        }
+
+        // --- 4. Load Data & Render Map ---
+        d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-albers-10m.json").then(us => {
+            // Filter TopoJSON for Tennessee (FIPS code 47)
+            const counties = topojson.feature(us, us.objects.counties).features;
+            tnFeatures = counties.filter(d => d.id.startsWith("47") || d.id === "47");
+
+            // Project specifically for the extracted state geometry using geoIdentity for pre-projected Albers
+            const projection = d3.geoIdentity()
+                .reflectY(false)
+                .fitExtent([[20, 20], [width - 20, height - 20]], { type: "FeatureCollection", features: tnFeatures });
+            
+            const pathGenerator = d3.geoPath().projection(projection);
+
+            // Hide loader once projected
+            loader.style.display = "none";
+
+            // Draw counties in their dedicated group (behind labels)
+            pathGroup.selectAll("path")
+                .data(tnFeatures)
+                .enter()
+                .append("path")
+                .attr("d", pathGenerator)
+                .attr("class", "county")
+                .attr("stroke", "#ffffff")
+                .attr("stroke-width", 0.75)
+                .on("mouseover", function(event, d) {
+                    const countyName = d.properties.name;
+                    const styleInfo = getCountyStyle(countyName);
+                    
+                    // Highlight effect (brings element to front within its own group only)
+                    d3.select(this)
+                        .attr("stroke", "#111827")
+                        .attr("stroke-width", 2)
+                        .raise();
+
+                    // Tooltip Construction
+                    let htmlContent = `
+                        <div class="font-bold text-base mb-1 border-b border-slate-600 pb-1">${countyName} County</div>
+                    `;
+                    
+                    if (styleInfo.rawModels.length === 0) {
+                        htmlContent += `<div class="text-slate-400 italic mt-1">No Active 287(g) Agreements</div>`;
+                    } else {
+                        htmlContent += `<div class="mt-1 flex flex-col gap-1">`;
+                        styleInfo.rawModels.forEach(model => {
+                            let badgeClass = "bg-slate-700 text-slate-300"; // default if filtered out
+                            if (activeFilters.includes(model)) {
+                                if (model.includes("Jail")) badgeClass = "bg-red-600 text-white";
+                                else if (model.includes("Task")) badgeClass = "bg-blue-600 text-white";
+                                else if (model.includes("Warrant")) badgeClass = "bg-green-600 text-white";
+                            }
+                            htmlContent += `<span class="px-2 py-1 rounded-sm text-xs font-semibold ${badgeClass}">${model}</span>`;
+                        });
+                        htmlContent += `</div>`;
+                    }
+
+                    tooltip.html(htmlContent)
+                        .style("opacity", 1)
+                        .style("transform", "translateY(0)");
+                })
+                .on("mousemove", function(event) {
+                    // Position tooltip dynamically near mouse
+                    const tooltipNode = tooltip.node();
+                    const xOffset = 10;
+                    const yOffset = 10;
+                    
+                    let xPos = event.pageX + xOffset;
+                    let yPos = event.pageY + yOffset;
+                    
+                    // Prevent overflow off screen edges
+                    if (xPos + tooltipNode.offsetWidth > window.innerWidth) {
+                        xPos = event.pageX - tooltipNode.offsetWidth - xOffset;
+                    }
+                    if (yPos + tooltipNode.offsetHeight > window.innerHeight) {
+                        yPos = event.pageY - tooltipNode.offsetHeight - yOffset;
+                    }
+
+                    tooltip.style("left", xPos + "px")
+                           .style("top", yPos + "px");
+                })
+                .on("mouseout", function(event, d) {
+                    // Revert stroke, taking search state into account
+                    d3.select(this)
+                        .attr("stroke", () => {
+                            if (searchTerm !== "" && d.properties.name.toLowerCase().includes(searchTerm.toLowerCase())) return "#111827";
+                            return "#ffffff";
+                        })
+                        .attr("stroke-width", () => {
+                            if (searchTerm !== "" && d.properties.name.toLowerCase().includes(searchTerm.toLowerCase())) return 2;
+                            return 0.75;
+                        });
+                    
+                    tooltip.style("opacity", 0)
+                           .style("transform", "translateY(5px)");
+                });
+
+            const labelOffsets = {
+                "Sequatchie": [8, 5],
+                "Bledsoe": [-2, -5],
+                "Meigs": [5, 2],
+                "Decatur": [4, 0],
+                "Perry": [-4, 0],
+                "Cannon": [0, 4],
+                "Trousdale": [4, 0],
+                "Moore": [0, 3],
+                "Loudon": [4, 0],
+                "Louden": [4, 0],
+                "Houston": [3, 0],
+                "Crockett": [0, 2]
+            };
+
+            // Add county labels in their dedicated group (rendered on top of all paths)
+            labelGroup.selectAll("text")
+                .data(tnFeatures)
+                .enter()
+                .append("text")
+                .attr("class", "county-label")
+                .attr("transform", d => {
+                    const centroid = pathGenerator.centroid(d);
+                    if (isNaN(centroid[0]) || isNaN(centroid[1])) return "translate(-1000,-1000)";
+                    
+                    const name = d.properties.name;
+                    const offset = labelOffsets[name] || [0, 0];
+                    
+                    // Shift y by 3px to vertically center text, plus custom nudges
+                    return `translate(${centroid[0] + offset[0]}, ${centroid[1] + offset[1] + 3})`;
+                })
+                .text(d => d.properties.name);
+
+            // Initial visual update to apply colors based on data
+            updateMapDisplay();
+
+        }).catch(error => {
+            console.error("Error loading TopoJSON data:", error);
+            loader.innerHTML = `<span class="text-red-500 font-bold">Failed to load map data. Please check network connection.</span>`;
+        });
+
+        // --- 5. Implement Event Listeners for Filters & Search ---
+        
+        // Checkboxes handler
+        document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                // Rebuild active filters array based on checked state
+                activeFilters = Array.from(document.querySelectorAll('input[type="checkbox"]:checked'))
+                                     .map(cb => cb.value);
+                updateMapDisplay();
+            });
+        });
+
+        // Search input handler
+        const searchInput = document.getElementById("searchInput");
+        searchInput.addEventListener("input", (e) => {
+            searchTerm = e.target.value.trim();
+            updateMapDisplay();
+        });
+
+    </script>
+</body>
+</html>
